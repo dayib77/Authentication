@@ -4,7 +4,8 @@ const express = require("express");
 const mongoose = require("mongoose");
 const bodyParser = require("body-parser");
 const ejs = require("ejs");
-const encrypt = require("mongoose-encryption");
+// const encrypt = require("mongoose-encryption"); // for secret key
+const md5 = require("md5");
 
 const app = express();
 
@@ -14,7 +15,8 @@ app.use(bodyParser.urlencoded({
   extended: true
 }));
 
-// console.log(process.env.api_key);
+// console.log("API key:",process.env.api_key);
+// console.log(md5("e80b5017098950fc58aad83c8c14978e"));
 
 const connnectDB = "mongodb://127.0.0.1:27017/userDB";
 mongoose.set("strictQuery", false);
@@ -28,7 +30,8 @@ const userSchema = new mongoose.Schema(
   {versionKey: false}
 );
 
-userSchema.plugin(encrypt, {secret: process.env.secret, encryptedFields: ["password"]});
+/*2nd Level: Encryption method*/
+// userSchema.plugin(encrypt, {secret: process.env.secret, encryptedFields: ["password"]});
 
 const User = mongoose.model("User", userSchema);
 
@@ -43,7 +46,7 @@ app.route("/register")
   .post((req, res) => {
     const newUser = new User({
       email: req.body.username,
-      password: req.body.password
+      password: md5(req.body.password) /*3rd Level: Hash function*/
     });
 
     newUser.save().then(() => {
@@ -60,7 +63,7 @@ app.route("/login")
   })
   .post((rq, rs) => {
     const usr = rq.body.username;
-    const pwd = rq.body.password;
+    const pwd = md5(rq.body.password);
 
     User.findOne({email: usr}).then((foundedUser) => {
         if (foundedUser) {
