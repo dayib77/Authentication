@@ -1,11 +1,16 @@
-require('dotenv').config();
+require('dotenv').config(); // Using Environment Variables to Keep key Secrets
 
 const express = require("express");
 const mongoose = require("mongoose");
 const bodyParser = require("body-parser");
 const ejs = require("ejs");
-// const encrypt = require("mongoose-encryption"); // for secret key
-const md5 = require("md5");
+
+// const encrypt = require("mongoose-encryption"); // Level 2 - Database Encryption => for secret key
+
+// const md5 = require("md5"); // Level 3 - Hashing Passwords => simple hash function
+
+const bcrypt = require("bcrypt"); // Level 4 - Salting and Hashing Passwords with bcrypt
+const saltRounds = 10;
 
 const app = express();
 
@@ -30,7 +35,6 @@ const userSchema = new mongoose.Schema(
   {versionKey: false}
 );
 
-/*2nd Level: Encryption method*/
 // userSchema.plugin(encrypt, {secret: process.env.secret, encryptedFields: ["password"]});
 
 const User = mongoose.model("User", userSchema);
@@ -44,17 +48,22 @@ app.route("/register")
     res.render("register")
   })
   .post((req, res) => {
-    const newUser = new User({
-      email: req.body.username,
-      password: md5(req.body.password) /*3rd Level: Hash function*/
-    });
 
-    newUser.save().then(() => {
-      console.log("Successfully saved a new user to userDB");
-      res.redirect("/");
-    }).catch((err) => {
-      console.log(err);
-    })
+    bcrypt.hash(req.body.password, saltRounds).then((hash) => {
+    // Store hash in your password DB.
+      const newUser = new User({
+        email: req.body.username,
+        password: hash
+      });
+
+      newUser.save().then(() => {
+        console.log("Successfully saved a new user to userDB");
+        res.redirect("/");
+      }).catch((err) => {
+        console.log(err);
+      })
+
+    }).catch((err) => {console.log(err);})
   });
 
 app.route("/login")
@@ -63,16 +72,26 @@ app.route("/login")
   })
   .post((rq, rs) => {
     const usr = rq.body.username;
-    const pwd = md5(rq.body.password);
+    const pwd = (rq.body.password);
 
     User.findOne({email: usr}).then((foundedUser) => {
         if (foundedUser) {
-          if (foundedUser.password === pwd) {
+
+          bcrypt.compare(pwd, foundedUser.password).then((result) => {
+            if (result) {
+              console.log(foundedUser.email + " => " + pwd);
+              rs.render("secrets");
+            } else {
+              rs.redirect("/login");
+            }
+          }).catch((err) => {console.log(err);})
+
+          /*if (foundedUser.password === pwd) {
             console.log(foundedUser.email + " => " + foundedUser.password);
             rs.render("secrets");
           } else {
             rs.redirect("/login");
-          }
+          }*/
         } else {
           rs.render("error");
         }
