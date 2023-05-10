@@ -1,4 +1,4 @@
-require('dotenv').config(); // Using Environment Variables to Keep key Secrets
+require("dotenv").config(); // Using Environment Variables to Keep key Secrets
 
 const express = require("express");
 const mongoose = require("mongoose");
@@ -20,10 +20,17 @@ const session = require("express-session");
 const passport = require("passport");
 const passportLocalMongoose = require("passport-local-mongoose");
 
+// Level 6 - Using OAuth 2.0 to sign in with Google API
+const GoogleStrategy = require("passport-google-oauth20").Strategy;
+const findOrCreate = require("mongoose-findorcreate");
+
+// Level 6 - Using OAuth 2.0 to sign in with Microsoft LinkedIn API
+const LinkedInStrategy = require("passport-linkedin-oauth2").Strategy;
+
 const app = express();
 
 app.use(express.static("public"));
-app.set('view engine', 'ejs');
+app.set("view engine", "ejs");
 app.use(bodyParser.urlencoded({
   extended: true
 }));
@@ -31,7 +38,7 @@ app.use(bodyParser.urlencoded({
 // console.log("API key:",process.env.api_key);
 // console.log(md5("e80b5017098950fc58aad83c8c14978e"));
 
-// initialize Session
+// initialize Session - Level 5 - Cookies and Sessions
 app.use(session({
   secret: process.env.SECRET,
   resave: false,
@@ -42,31 +49,110 @@ app.use(session({
 app.use(passport.initialize());
 app.use(passport.session());
 
+// Database connection
 const connnectDB = "mongodb://127.0.0.1:27017/userDB";
 mongoose.set("strictQuery", false);
 mongoose.connect(connnectDB, { useNewUrlParser: true });
 
+// Schema
 const userSchema = new mongoose.Schema(
   {
-    email: {type: String/*, required: [true, "This field 'email' is mandatory"]*/},
-    password: {type: String/*, required: [true, "This field 'password' is mandatory"]*/}
-  },
-  {versionKey: false}
+    username: String/*{type: String, required: [true, "This field 'email' is mandatory"]}*/,
+    password: String/*{type: String, required: [true, "This field 'password' is mandatory"]}*/,
+    appID: String,
+    provider: String,
+    secret: String
+  }/*,
+  {versionKey: false}*/
 );
 
 // userSchema.plugin(encrypt, {secret: process.env.secret, encryptedFields: ["password"]});
-
 userSchema.plugin(passportLocalMongoose);
+userSchema.plugin(findOrCreate); // Made up function aims to find or create a document
 
 const User = mongoose.model("User", userSchema);
 
+// Local Strategy
 passport.use(User.createStrategy());
 
-passport.serializeUser(User.serializeUser());
-passport.deserializeUser(User.deserializeUser());
+/*passport.serializeUser(User.serializeUser());
+passport.deserializeUser(User.deserializeUser());*/
+passport.serializeUser(function(user, cb) {
+  process.nextTick(function() {
+    return cb(null, {
+      id: user.id,
+      username: user.username,
+      picture: user.picture
+    });
+  });
+});
+
+passport.deserializeUser(function(user, cb) {
+  process.nextTick(function() {
+    return cb(null, user);
+  });
+});
+
+// Google Strategy
+passport.use(new GoogleStrategy({
+    clientID: process.env.CLIENT_ID,
+    clientSecret: process.env.CLIENT_SECRET,
+    callbackURL: "http://localhost:3000/auth/google/secrets",
+    userProfileURL: "https://www.googleapis.com/oauth2/v3/userinfo"
+  },
+  function(accessToken, refreshToken, profile, cb) {
+    // console.log("My personal Info from google:\n",profile.provider);
+    User.findOrCreate({ appID: profile.id, provider: profile.provider }, function (err, user) {
+      return cb(err, user);
+    });
+  }
+));
+
+// LinkedIn Strategy
+passport.use(new LinkedInStrategy({
+    clientID: process.env.LINKEDIN_KEY,
+    clientSecret: process.env.LINKEDIN_SECRET,
+    callbackURL: "http://localhost:3000/auth/linkedin/secrets",
+    scope: ["r_emailaddress", "r_liteprofile"],
+    state: true
+  },
+  function(accessToken, refreshToken, profile, cb) {
+  // asynchronous verification, for effect...
+  // console.log("My personal Info from LinkedIn:\n",profile);
+  User.findOrCreate({ appID: profile.id, provider: profile.provider }, function (err, user) {
+    return cb(err, user);
+  });
+
+}));
+
+
 
 app.get("/", (req, res) => {
     res.render("home")
+});
+
+// Google authenticaton
+app.get("/auth/google",
+  passport.authenticate("google", { scope: ["profile"] })
+);
+
+app.get("/auth/google/secrets",
+  passport.authenticate("google", { failureRedirect: "/login" }),
+  function(req, res) {
+    // Successful authentication, redirect home.
+    res.redirect("/secrets");
+});
+
+// Microsoft LinkedIn authentication
+app.get("/auth/linkedin",
+  passport.authenticate("linkedin")
+);
+
+app.get("/auth/linkedin/secrets",
+  passport.authenticate("linkedin", {/* successRedirect: "/secrets",*/failureRedirect: "/login" }),
+  function(req, res) {
+    // Successful authentication, redirect home.
+    res.redirect("/secrets");
 });
 
 app.route("/register")
@@ -95,10 +181,10 @@ app.route("/register")
     User.register({username: req.body.username}, req.body.password).then((user) => {
       passport.authenticate("local")(req, res, () => {
         console.log("Welcome !");
-        res.redirect("/secrets");
+        res.redirect("/login");
       })
     }).catch((err) => {
-      console.log("Error",err);
+      console.log("User already exist, try again");
       res.redirect("/register");
     })
 
@@ -147,7 +233,7 @@ app.route("/login")
 
       rq.login(user, (err) => {
         if (err) {
-          console.log("My Error", err);
+          // console.log("My Error", err);
           rs.redirect("/login");
         } else {
           passport.authenticate("local")(rq, rs, () => {
@@ -162,14 +248,17 @@ app.route("/secrets")
   .get((req, res) => {
     if (req.isAuthenticated()) {
       console.log("Session still active");
-      res.render("secrets");
+      console.log("Result=", req.user.id);
+      User.find({ "_id": {$eq: req.user.id}, "secret": {$ne: null} }).then((users) => {
+        // console.log("Result=", users);
+        res.render("secrets", {Usr: users});
+      }).catch((err) => {console.log(err);})
     } else {
       res.redirect("/login");
     }
-  })
+});
 
-app.route("/logout")
-  .get((req, res) => {
+app.get("/logout", (req, res) => {
     req.logout((err) => {
       if (!err) {
         console.log("Logout o|o");
@@ -178,8 +267,30 @@ app.route("/logout")
         console.log("My error from logout route", err);
       }
     })
-  })
+});
 
+app.route("/submit")
+  .get((req, res) => {
+    if (req.isAuthenticated()) {
+      res.render("submit");
+    } else {
+      res.redirect("/login");
+    }
+  }).post((rq,rs) => {
+    const submittedSecret = rq.body.secret;
+    // console.log(rq.user);
+    const userID = rq.user.id;
+
+    User.findById({_id: userID}).then((foundedUser) => {
+      if (foundedUser) {
+        foundedUser.secret = submittedSecret;
+        foundedUser.save().then(() => {
+          console.log("Document updated with secret field");
+          rs.redirect("/secrets");
+        }).catch((err) => {console.log(err);})
+      }
+    }).catch((err) => {console.log("Error from post submit secret/n",err);})
+  });
 
 
 
